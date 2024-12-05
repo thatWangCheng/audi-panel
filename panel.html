@@ -1,0 +1,233 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>车辆与充电状态展示</title>
+  <script src="https://cdn.jsdelivr.net/npm/axios/dist/axios.min.js"></script>
+  <style>
+    body {
+      font-family: Arial, sans-serif;
+      margin: 20px;
+    }
+    .status {
+      border: 1px solid #ccc;
+      padding: 15px;
+      margin: 10px 0;
+      border-radius: 5px;
+      background: #f9f9f9;
+    }
+    .error {
+      color: red;
+    }
+    .progress-bar-container {
+      display: flex;
+      align-items: center;
+      margin-top: 10px;
+    }
+    .progress-bar {
+      flex: 1;
+      height: 25px;
+      border-radius: 5px;
+      background-color: #e0e0e0;
+      overflow: hidden;
+      margin-right: 10px;
+    }
+    .progress-bar-inner {
+      height: 100%;
+      transition: width 0.5s ease-in-out;
+      background-color: #4caf50;
+    }
+    .progress-label {
+      font-weight: bold;
+    }
+    .status-card {
+      border: 1px solid #ddd;
+      padding: 10px;
+      border-radius: 5px;
+      background: #fdfdfd;
+      margin-top: 10px;
+    }
+    .status-card h4 {
+      margin: 0;
+      font-size: 1.2em;
+    }
+    .status-card p {
+      margin: 5px 0;
+    }
+    table {
+      width: 100%;
+      border-collapse: collapse;
+      margin-top: 10px;
+    }
+    table th, table td {
+      border: 1px solid #ddd;
+      padding: 8px;
+      text-align: left;
+    }
+    table th {
+      background-color: #f2f2f2;
+    }
+  </style>
+</head>
+<body>
+  <h1>车辆与充电状态展示</h1>
+  <div>
+    <button id="refreshButton">刷新车辆与充电状态</button>
+    <div id="statusContainer"></div>
+  </div>
+  <script>
+    const vehicleStatusApi = "http://localhost:8989/api/vehicle-status";
+    const chargerApiUrl = "http://localhost:8989/api/charger-status";
+
+    const textIdDescriptions = {
+      "interval.inspection.warn": "检修警告",
+      "status_parking_light_off": "停车灯关闭",
+      "temperature_outside_valid": "外部温度有效",
+      "parking_brake_active": "停车制动已激活",
+      "soc_ok": "电池充电状态正常",
+      "bem_ok": "高压电池充电状态正常",
+      "speed_ok": "当前速度正常",
+      "range_ok": "当前剩余续航里程",
+      "door_locked": "车门已上锁",
+      "door_closed": "车门已关闭",
+      "window_closed": "车窗已关闭",
+      "tyre_invalid": "轮胎数据无效",
+      "oil.min.ok": "机油水平正常",
+      "oil.level": "机油水平百分比",
+      "not_supported": "功能不支持",
+      "scr.number_restarts": "SCR系统重启次数",
+      "engine_type_electric": "电动发动机",
+    };
+
+    async function fetchAllStatus() {
+      const container = document.getElementById("statusContainer");
+      container.innerHTML = "<p>加载中...</p>";
+      try {
+        const [vehicleResponse, chargerResponse] = await Promise.all([
+          axios.get(vehicleStatusApi),
+          axios.get(chargerApiUrl),
+        ]);
+        container.innerHTML = "";
+        renderVehicleStatus(vehicleResponse.data);
+        renderChargerStatus(chargerResponse.data);
+      } catch (error) {
+        console.error("Error fetching status:", error);
+        container.innerHTML = `<div class="error">无法获取数据: ${error.message}</div>`;
+      }
+    }
+
+    function renderVehicleStatus(data) {
+      const vehicleData = data.StoredVehicleDataResponse.vehicleData.data;
+      const container = document.getElementById("statusContainer");
+      const htmlContent = vehicleData.map((item) => {
+        const fields = item.field
+          .filter(field => field.value !== null && field.value !== undefined)
+          .map(field => `
+            <tr>
+              <td>${field.id}</td>
+              <td>${field.value}</td>
+              <td>${field.unit ?? "N/A"}</td>
+              <td>${field.textId ?? "N/A"}</td>
+              <td>${formatTimestamp(field.tsCarSentUtc)}</td>
+              <td>${visualizeFieldValue(field, item.id)}</td>
+              <td>${visualizeFieldDescription(field, item.id)}</td>
+            </tr>
+          `).join("");
+        if (fields.length === 0) return "";
+        return `
+          <div class="status">
+            <h3>车辆状态 - 数据 ID: ${item.id}</h3>
+            <table>
+              <thead>
+                <tr>
+                  <th>Field ID</th>
+                  <th>Value</th>
+                  <th>Unit</th>
+                  <th>Text ID</th>
+                  <th>Timestamp</th>
+                  <th>可视化字段</th>
+                  <th>描述</th>
+                </tr>
+              </thead>
+              <tbody>
+                ${fields}
+              </tbody>
+            </table>
+          </div>
+        `;
+      }).join("");
+      container.innerHTML += htmlContent || "<p>没有有效的车辆状态数据。</p>";
+    }
+
+    function renderChargerStatus(data) {
+      const charger = data.charger;
+      const battery = charger.status.batteryStatusData;
+      const charging = charger.status.chargingStatusData;
+      const settings = charger.settings;
+
+      const container = document.getElementById("statusContainer");
+      container.innerHTML += `
+        <div class="status">
+          <h3>充电状态</h3>
+          <div class="progress-bar-container">
+            <div class="progress-bar">
+              <div class="progress-bar-inner" style="width: ${battery.stateOfCharge.content}%;"></div>
+            </div>
+            <span class="progress-label">${battery.stateOfCharge.content}%</span>
+          </div>
+          <div class="status-card">
+            <h4>充电详情</h4>
+            <p>当前充电模式: ${charging.chargingMode.content}</p>
+            <p>当前充电速率: ${charging.actualChargeRate.content} ${charging.chargeRateUnit.content}</p>
+            <p>剩余充电时间: ${battery.remainingChargingTime.content === 65535 ? "N/A" : battery.remainingChargingTime.content + " 分钟"}</p>
+          </div>
+          <div class="status-card">
+            <h4>充电设置</h4>
+            <p>最大充电电流: ${settings.maxChargeCurrent.content}</p>
+            <p>自动插头解锁 (AC): ${settings.automaticPlugUnlockSettings.allowACOnce}</p>
+            <p>充电模式选择: ${settings.chargeModeSelection.value.content}</p>
+          </div>
+        </div>
+      `;
+    }
+
+    function visualizeFieldValue(field, dataId) {
+      if (dataId === "0x0301FFFFFF" && field.id === "0x0301020001") {
+        const kelvin = parseFloat(field.value) * 0.1;
+        const celsius = kelvin - 273.15;
+        return `${celsius.toFixed(2)} °C`;
+      }
+      if (field.textId?.endsWith("_closed") && field.value === "3") {
+        return "关闭";
+      }
+      if (field.textId?.endsWith("_locked") && field.value === "2") {
+        return "上锁";
+      }
+      return "-";
+    }
+
+    function visualizeFieldDescription(field, dataId) {
+      if (field.textId && textIdDescriptions[field.textId]) {
+        return textIdDescriptions[field.textId];
+      }
+      if (dataId === "0x0101010002" && field.id === "0x0101010002") {
+        return "总行驶里程";
+      }
+      if (dataId === "0x0301FFFFFF" && field.id === "0x0301020001") {
+        return "外部温度";
+      }
+      return "-";
+    }
+
+    function formatTimestamp(utcTimestamp) {
+      const utcDate = new Date(utcTimestamp);
+      const localDate = new Date(utcDate.getTime() + 8 * 60 * 60 * 1000);
+      return localDate.toISOString().replace("T", " ").split(".")[0];
+    }
+
+    document.getElementById("refreshButton").addEventListener("click", fetchAllStatus);
+    fetchAllStatus();
+  </script>
+</body>
+</html>
